@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { uploadImage } from '../storage';
 import { formatCurrency, calculateCosts, generateId } from '../utils';
 import { IconClose, IconPlus, IconImage } from './Icons';
 import { useToast } from './Toast';
@@ -11,9 +12,11 @@ export default function RecipeModal({ isOpen, recipe, onClose, onSave }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [imageData, setImageData] = useState(null);
+  const [imageFile, setImageFile] = useState(null);
   const [materials, setMaterials] = useState([{ id: generateId(), name: '', quantity: '', value: '' }]);
   const [customSalePrice, setCustomSalePrice] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const isEditing = !!recipe;
 
@@ -24,6 +27,7 @@ export default function RecipeModal({ isOpen, recipe, onClose, onSave }) {
         setName(recipe.name);
         setDescription(recipe.description || '');
         setImageData(recipe.image || null);
+        setImageFile(null);
         setMaterials(
           recipe.materials.length > 0
             ? recipe.materials.map(m => ({ ...m, id: generateId() }))
@@ -34,6 +38,7 @@ export default function RecipeModal({ isOpen, recipe, onClose, onSave }) {
         setName('');
         setDescription('');
         setImageData(null);
+        setImageFile(null);
         setMaterials([{ id: generateId(), name: '', quantity: '', value: '' }]);
         setCustomSalePrice('');
       }
@@ -57,7 +62,10 @@ export default function RecipeModal({ isOpen, recipe, onClose, onSave }) {
       return;
     }
     const reader = new FileReader();
-    reader.onload = (e) => setImageData(e.target.result);
+    reader.onload = (e) => {
+      setImageData(e.target.result);
+      setImageFile(file);
+    };
     reader.readAsDataURL(file);
   }, [showToast]);
 
@@ -78,31 +86,49 @@ export default function RecipeModal({ isOpen, recipe, onClose, onSave }) {
   };
 
   // Save
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim()) {
       showToast('Digite o nome da peça', 'error');
       nameInputRef.current?.focus();
       return;
     }
 
-    const validMaterials = parsedMaterials.filter(m => m.name.trim());
-    const finalCosts = calculateCosts(validMaterials);
+    setIsSaving(true);
+    
+    try {
+      const validMaterials = parsedMaterials.filter(m => m.name.trim());
+      const finalCosts = calculateCosts(validMaterials);
+      const recipeId = recipe?.id || generateId();
 
-    const recipeData = {
-      id: recipe?.id || generateId(),
-      name: name.trim(),
-      description: description.trim(),
-      image: imageData,
-      materials: validMaterials,
-      costs: finalCosts,
-      customSalePrice: customSalePrice !== '' ? parseFloat(customSalePrice) : null,
-      createdAt: recipe?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+      let finalImageUrl = imageData; // If it's an existing URL, keep it
+      
+      // If there's a new file, upload it
+      if (imageFile) {
+        showToast('Fazendo upload da imagem...', 'default');
+        finalImageUrl = await uploadImage(imageFile, recipeId);
+      }
 
-    onSave(recipeData);
-    showToast(isEditing ? 'Receita atualizada com sucesso!' : 'Receita criada com sucesso!', 'success');
-    onClose();
+      const recipeData = {
+        id: recipeId,
+        name: name.trim(),
+        description: description.trim(),
+        image: finalImageUrl,
+        materials: validMaterials,
+        costs: finalCosts,
+        customSalePrice: customSalePrice !== '' ? parseFloat(customSalePrice) : null,
+        createdAt: recipe?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await onSave(recipeData);
+      showToast(isEditing ? 'Receita atualizada com sucesso!' : 'Receita criada com sucesso!', 'success');
+      onClose();
+    } catch (error) {
+      console.error(error);
+      showToast('Erro ao salvar receita. Tente novamente.', 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Keyboard
@@ -154,8 +180,9 @@ export default function RecipeModal({ isOpen, recipe, onClose, onSave }) {
                   <img src={imageData} alt="Preview da peça" />
                   <button
                     className="image-remove"
-                    onClick={(e) => { e.stopPropagation(); setImageData(null); }}
+                    onClick={(e) => { e.stopPropagation(); setImageData(null); setImageFile(null); }}
                     aria-label="Remover imagem"
+                    disabled={isSaving}
                   >
                     <IconClose size={16} />
                   </button>
@@ -284,9 +311,9 @@ export default function RecipeModal({ isOpen, recipe, onClose, onSave }) {
         </div>
 
         <div className="modal-footer">
-          <button className="btn-cancel" onClick={onClose}>Cancelar</button>
-          <button className="btn-save" onClick={handleSave}>
-            {isEditing ? 'Atualizar Receita' : 'Salvar Receita'}
+          <button className="btn-cancel" onClick={onClose} disabled={isSaving}>Cancelar</button>
+          <button className="btn-save" onClick={handleSave} disabled={isSaving}>
+            {isSaving ? 'Salvando...' : (isEditing ? 'Atualizar Receita' : 'Salvar Receita')}
           </button>
         </div>
       </div>

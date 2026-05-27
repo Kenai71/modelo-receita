@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { loadRecipes, saveRecipes } from './storage';
+import { loadRecipes, saveRecipe, deleteRecipe } from './storage';
 import { calculateCosts } from './utils';
 import { ToastProvider, useToast } from './components/Toast';
 import Header from './components/Header';
@@ -13,7 +13,8 @@ function AppContent() {
   const showToast = useToast();
 
   // State
-  const [recipes, setRecipes] = useState(() => loadRecipes());
+  const [recipes, setRecipes] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState({ priceMin: '', priceMax: '', materials: [], sort: 'newest' });
 
@@ -22,10 +23,15 @@ function AppContent() {
   const [editingRecipe, setEditingRecipe] = useState(null);
   const [detailRecipe, setDetailRecipe] = useState(null);
 
-  // Persist
+  // Fetch initial data
   useEffect(() => {
-    saveRecipes(recipes);
-  }, [recipes]);
+    async function fetchRecipes() {
+      const data = await loadRecipes();
+      setRecipes(data);
+      setLoading(false);
+    }
+    fetchRecipes();
+  }, []);
 
   // Keyboard shortcut
   useEffect(() => {
@@ -40,24 +46,34 @@ function AppContent() {
   }, []);
 
   // Handlers
-  const handleSaveRecipe = useCallback((recipeData) => {
-    setRecipes(prev => {
-      const idx = prev.findIndex(r => r.id === recipeData.id);
-      if (idx !== -1) {
-        const updated = [...prev];
-        updated[idx] = recipeData;
-        return updated;
-      }
-      return [recipeData, ...prev];
-    });
-    setEditingRecipe(null);
-  }, []);
+  const handleSaveRecipe = useCallback(async (recipeData) => {
+    try {
+      await saveRecipe(recipeData);
+      setRecipes(prev => {
+        const idx = prev.findIndex(r => r.id === recipeData.id);
+        if (idx !== -1) {
+          const updated = [...prev];
+          updated[idx] = recipeData;
+          return updated;
+        }
+        return [recipeData, ...prev];
+      });
+      setEditingRecipe(null);
+    } catch (error) {
+      showToast('Erro ao salvar no banco de dados', 'error');
+    }
+  }, [showToast]);
 
-  const handleDeleteRecipe = useCallback((id) => {
+  const handleDeleteRecipe = useCallback(async (id) => {
     if (!window.confirm('Tem certeza que deseja excluir esta receita?')) return;
-    setRecipes(prev => prev.filter(r => r.id !== id));
-    setDetailRecipe(null);
-    showToast('Receita excluída', 'default');
+    try {
+      await deleteRecipe(id);
+      setRecipes(prev => prev.filter(r => r.id !== id));
+      setDetailRecipe(null);
+      showToast('Receita excluída', 'default');
+    } catch (error) {
+      showToast('Erro ao excluir no banco de dados', 'error');
+    }
   }, [showToast]);
 
   const handleEditFromDetail = useCallback((recipe) => {
@@ -142,45 +158,58 @@ function AppContent() {
       />
 
       <main className="main" id="main">
-        {hasResults && (
-          <div className="recipes-grid" id="recipes-grid">
-            {filteredRecipes.map((recipe, i) => (
-              <RecipeCard
-                key={recipe.id}
-                recipe={recipe}
-                index={i}
-                onClick={setDetailRecipe}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* Empty State */}
-        {!hasRecipes && (
-          <div className="empty-state" id="empty-state">
-            <svg className="empty-icon" viewBox="0 0 80 80" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <rect x="8" y="8" width="64" height="64" rx="12" />
-              <path d="M28 40h24M40 28v24" strokeLinecap="round" strokeWidth="2" />
-              <circle cx="40" cy="40" r="20" strokeDasharray="4 4" />
+        {loading ? (
+          <div className="empty-state">
+            <svg className="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ animation: 'pulse 1.5s infinite' }}>
+              <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
             </svg>
-            <h2>Nenhuma receita ainda</h2>
-            <p>Crie sua primeira receita de joia clicando no botão acima.</p>
+            <h2>Carregando receitas...</h2>
+            <p>Conectando ao Firebase</p>
           </div>
-        )}
+        ) : (
+          <>
+            {hasResults && (
+              <div className="recipes-grid" id="recipes-grid">
+                {filteredRecipes.map((recipe, i) => (
+                  <RecipeCard
+                    key={recipe.id}
+                    recipe={recipe}
+                    index={i}
+                    onClick={setDetailRecipe}
+                  />
+                ))}
+              </div>
+            )}
 
-        {/* No Results */}
-        {hasRecipes && !hasResults && (
-          <div className="no-results" id="no-results">
-            <svg className="empty-icon" viewBox="0 0 80 80" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="35" cy="35" r="20" />
-              <line x1="50" y1="50" x2="65" y2="65" strokeWidth="2.5" strokeLinecap="round" />
-              <line x1="28" y1="35" x2="42" y2="35" strokeLinecap="round" strokeWidth="2" />
-            </svg>
-            <h2>Nenhum resultado encontrado</h2>
-            <p>Tente buscar com outros termos ou ajuste os filtros.</p>
-          </div>
+            {/* Empty State */}
+            {!hasRecipes && (
+              <div className="empty-state" id="empty-state">
+                <svg className="empty-icon" viewBox="0 0 80 80" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="8" y="8" width="64" height="64" rx="12" />
+                  <path d="M28 40h24M40 28v24" strokeLinecap="round" strokeWidth="2" />
+                  <circle cx="40" cy="40" r="20" strokeDasharray="4 4" />
+                </svg>
+                <h2>Nenhuma receita ainda</h2>
+                <p>Crie sua primeira receita de joia clicando no botão acima.</p>
+              </div>
+            )}
+
+            {/* No Results */}
+            {hasRecipes && !hasResults && (
+              <div className="no-results" id="no-results">
+                <svg className="empty-icon" viewBox="0 0 80 80" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="35" cy="35" r="20" />
+                  <line x1="50" y1="50" x2="65" y2="65" strokeWidth="2.5" strokeLinecap="round" />
+                  <line x1="28" y1="35" x2="42" y2="35" strokeLinecap="round" strokeWidth="2" />
+                </svg>
+                <h2>Nenhum resultado encontrado</h2>
+                <p>Tente buscar com outros termos ou ajuste os filtros.</p>
+              </div>
+            )}
+          </>
         )}
       </main>
+
 
       {/* Create Modal */}
       <RecipeModal
